@@ -1,5 +1,6 @@
 function errfmt(token)
    local line = token.meta.source
+   line = type(line) == "string" and line or line()
    local before = line {0, token.pos.from} :split "\n"
    local after = line {token.pos.to, 0} :split "\n"
    return

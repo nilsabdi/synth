@@ -49,13 +49,13 @@ end
 
 function string:split (delim)
 	local items = {}
-	local curr = self:find(delim)
+	local curr = self:find(delim, nil, true)
    local last = 1
 
 	while curr do
 		items[#items+1] = self{last, curr}
 		last = curr+1
-		curr = self:find(delim, curr+1)
+		curr = self:find(delim, curr+1, true)
 	end
 
    items[#items+1] = self{last, #self+1}

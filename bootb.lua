@@ -21,11 +21,21 @@ segment {[[parse]], ignore = [[space newline tab]], entry = [[Template]], } {
       {Plain = [=[ element:ParseElement ]=],},
    },
    ParseElement = {
+      {Type = [=[ type:TokenType operators:Operator* ]=],},
       {Rule = [=[ rule:RulePath operators:Operator* ]=],},
       {Tokens = [=[ tokens:String operators:Operator* ]=],},
    },
    RulePath = [=[ rule:Name variant:VariantPart* ]=],
    VariantPart = [=[ '.' variant:Name ]=],
+   TokenType = {
+      [=[ t:"WORD" ]=],
+      [=[ t:"NUMBER" ]=],
+      [=[ t:"SYMBOL" ]=],
+      [=[ t:"SPACE" ]=],
+      [=[ t:"TAB" ]=],
+      [=[ t:"NEWLINE" ]=],
+      [=[ t:"BYTE" ]=],
+   },
    ScriptRule = [=[ name:Name body:ScriptVariant ]=],
    ScriptVariant = {
       {Array = [=[ '[' children:ScriptVariant* ']' ]=],},
@@ -49,10 +59,10 @@ segment {[[parse]], ignore = [[space newline tab]], entry = [[Template]], } {
       {Interline = [=[ "^" ]=],},
    },
    Operator = {
-      [=[ op:'*' ]=],
-      [=[ op:'+' ]=],
-      [=[ op:'?' ]=],
-      [=[ op:'!' ]=],
+      {NoneOrMore = [=[ op:'*' ]=],},
+      {OneOrMore = [=[ op:'+' ]=],},
+      {NoneOrOne = [=[ op:'?' ]=],},
+      {AllExcept = [=[ op:'!' ]=],},
    },
    String = {
       {A = [=[ '"' inner:AString* '"' ]=],},
@@ -87,80 +97,251 @@ segment {[[parse]], ignore = [[space newline tab]], entry = [[Template]], } {
 segment {[[script]], } {
    Name = function (self, alias, segment)
       self.string = collapse(self)
+   
    end,
 },
-segment {[[output]], target = [[boota.lua]], } {
+segment {[[script]], direction = [[down]], } {
+   Segment = {
+      Parse = function (self, alias, segment)
+         for _,conf in pairs(self.config) do
+            if conf.name.string == 'entry' then
+               assert(not self.entry, 'entry point already specified')
+               self.entry = collapse(conf.item)
+            end
+         end
+         assert(self.entry, 'Parse segment must have an entry point')
+      
+      end,
+   },
+   ParseElement = function (self, alias, segment)
+      local opends = ''
+      if #self.operators == 0 then self.operators = {'tokens:match('} end
+      for i=1, #self.operators do
+         opends = opends..')'
+      end
+      self.opends = opends
+   
+   end,
+   ParseRule = function (self, alias, segment)
+      self.body.pname = self.name.string
+   
+   end,
+   ParseVariant = {
+      Array = function (self, alias, segment)
+         for _,child in ipairs(self.children) do
+            child.pname = self.pname
+         end
+      
+      end,
+      Named = function (self, alias, segment)
+         self.pattern.pname = (self.pname and self.pname..'.' or '')..self.name.string
+      
+      end,
+      Anonymous = function (self, alias, segment)
+         self.pattern.pname = self.pname
+      
+      end,
+   },
+   String = function (self, alias, segment)
+      self.inner = collapse(self.inner):gsub(']\\=]', ']=]')
+   
+   end,
+},
+segment {[[output]], target = [[bootc.lua]], } {
    Template = [=[ 
-      'require "template"' / 
-      'return template {} {' / 
+      'require "newtokenizer"' / 
+      'require "lib.iter"' / 
+      'require "lib.dump"' / 
+      'require "lib.stringext"' / 
+      'require "errfmt"' / 
+      'require "common"' / 
       / 
-      ^template / 
+      'global = {}' / 
+      'indent = "   "' / 
       / 
-      '}' 
+      'source = fetch(...)' / 
+      'assert(source, "a source file must be specified")' / 
+      'tokens = tokenize(source)' / 
+      'assert(tokens, "tokenization failure")' / 
+      / 
+      template 
    ]=],
-   Segment = [=[ 
-      "segment {[[" name "]], " config "} {" 
-         > ^body < 
-      "}," 
-   ]=],
+   Segment = {
+      Parse = [=[ 
+         "local parse_conf = {" config "}" / 
+         "local ruleiter = function(self)" 
+            > 'for n,rule in ipairs(self) do' 
+               > 'if type(rule) == "table" then n,rule = next(rule) end' / 
+               'local v = rule()' / 
+               'if v then return v end' < 
+            'end' < 
+         'end' / 
+         / 
+         'tokens.ignore = ' 
+            > 'iter(' name '_conf.ignore:trim():split(" "))' / 
+            ':map(function(e) return T(e) end)' < 
+         / 
+         'R = {' 
+            > ^body < 
+         '}' / 
+         'AST = R.' entry '()' / 
+         'if not AST and tokens:peek() then' 
+            > 'error("unexpected token:"..errfmt(tokens:getLast()))' < 
+         'end' / 
+         / 
+         
+      ]=],
+      Script = [=[ 
+         'local ' name '_conf = {' config '}' / 
+         'script = function(scripts, ast)' 
+            > 'local direction = ' name '_conf.direction' / 
+            'for alias, child in pairs(copy(ast)) do' 
+               > 'if type(child) == "table" and direction ~= "down" then' 
+                  > 'script(scripts, child)' < 
+               'end' / 
+               'if meta(child) and meta(child).type then' 
+                  > 'local func = scripts' / 
+                  'for _, t in ipairs(meta(child).type) do' 
+                     > 'if type(func) == "table" then' 
+                        > 'func = func[t] or findOrderedKey(func, t)' < 
+                     'end' < 
+                  'end' / 
+                  'if type(func) == "function" then' 
+                     > 'if type(child) == "table" and #child > 0 then' 
+                        > 'for _, item in ipairs(child) do' 
+                           > 'func(item, alias)' < 
+                        'end' < 
+                     'else' 
+                        > 'func(child, alias)' < 
+                     'end' < 
+                  'end' < 
+               'end' / 
+               'if type(child) == "table" and direction == "down" then' 
+                  > 'script(scripts, child)' < 
+               'end' < 
+            'end' < 
+         'end' / 
+         'S = {' 
+            > ^body < 
+         '}' / 
+         'script(S, AST)' / 
+         / 
+         
+      ]=],
+      Output = [=[ 
+         'local output_conf = {' config '}' / 
+         'local assert_node = function(node, alias)' 
+            > 'if not node[alias] then' 
+               > 'error("node doesn\'t exist: "..alias.." in "..dump(node)..":"..dump(getmetatable(node).type), 2)' < 
+            'end' / 
+            'return node[alias]' < 
+         'end' / 
+         'local function output(node, interline, dent)' 
+            > 'if type(node) == "string" or node.meta and node.meta.__token__ then' 
+               > 'return tostring(node)' < 
+            'else' 
+               > 'if #node > 0 or not getmetatable(node).type then' 
+                  > 'local out = {}' / 
+                  'for _, node in ipairs(node) do' 
+                     > 'out[#out+1] = output(node, false, dent)' / 
+                     'if interline then out[#out+1] = "\\n"..indent*dent end' < 
+                  'end' / 
+                  'if interline then out[#out] = nil end' / 
+                  'return table.concat(out)' / 
+                  < 
+               'else' 
+                  > 'local fn = O' / 
+                  'for _, t in ipairs(getmetatable(node).type) do' 
+                     > 'fn = assert(fn[t], "type "..t.." has no output")' / 
+                     'if type(fn) == "function" then break end' < 
+                  'end' / 
+                  'return fn(node, false, dent)' < 
+               'end' < 
+            'end' < 
+         'end' / 
+         'O = {' 
+            > ^body < 
+         '}' / 
+         'print(output(AST, false, 0))' / 
+         
+      ]=],
+   },
    Config = [=[ 
       name ' = [[' item ']], ' 
    ]=],
    ParseRule = [=[ 
-      name ' = ' ^body 
+      name ' = setmetatable({' 
+         > ^body < 
+      '}, {__call = ruleiter});' / 
+      
    ]=],
    ParseVariant = {
       Array = [=[ 
-         '{' 
-            > ^children < 
-         '},' 
+         ^children 
       ]=],
       Anonymous = [=[ 
-         pattern ',' 
+         pattern ';' 
       ]=],
       Named = [=[ 
-         '{' name ' = ' pattern '},' 
+         '{' name ' = ' pattern '};' 
       ]=],
    },
    ParsePattern = [=[ 
-      '[=[ ' chunks ']\=]' 
+      'function ()' 
+         > 'local __reset__, node = tokens.curr, {}' / 
+         'repeat' 
+            > ^chunks / 
+            'return setmetatable(node, {type=("' pname '"):split(".")})' < 
+         'until true' / 
+         / 
+         'tokens.curr = __reset__' < 
+      'end' 
    ]=],
    ParseChunk = {
       Aliased = [=[ 
-         name ':' element ' ' 
+         'node.' name ' = ' element / 
+         'if not node.' name ' then break end' / 
+         
       ]=],
       Plain = [=[ 
-         element ' ' 
+         'if not ' element ' then break end' / 
+         
       ]=],
    },
    ParseElement = {
+      Type = [=[ 
+         operators type opends 
+      ]=],
       Rule = [=[ 
-         rule operators 
+         operators 'R.' rule opends 
       ]=],
       Tokens = [=[ 
-         tokens operators 
+         operators tokens opends 
       ]=],
    },
    RulePath = [=[ 
       rule variant 
    ]=],
    VariantPart = [=[ 
-      '.' variant 
+      '"' variant '"' 
+   ]=],
+   TokenType = [=[ 
+      'T"' t '"' 
    ]=],
    ScriptRule = [=[ 
-      name ' = ' body 
+      '{' name ' = ' body '};' 
    ]=],
    ScriptVariant = {
       Array = [=[ 
          '{' 
             > ^children < 
-         '},' 
+         '}' 
       ]=],
       Code = [=[ 
-         code ',' 
+         code 
       ]=],
       Named = [=[ 
-         name ' = ' children 
+         name ' = ' children ';' 
       ]=],
    },
    OutputRule = [=[ 
@@ -180,39 +361,55 @@ segment {[[output]], target = [[boota.lua]], } {
       ]=],
    },
    OutputPattern = [=[ 
-      '[=[ ' 
-         > chunks < 
-      ']\=]' 
+      'function(self, interline, dent)' 
+         > 'local out = {}' / 
+         'local interline = interline or false' / 
+         'local dent = dent or 0' / 
+         / 
+         ^chunks / 
+         / 
+         'return table.concat(out)' < 
+      'end' 
    ]=],
    OutputChunk = [=[ 
       element 
    ]=],
    OutputElement = {
       Child = [=[ 
-         name " " 
+         'out[#out+1] = output(assert_node(self, "' name '"), interline, dent)' 
       ]=],
       String = [=[ 
-         string " " 
+         'out[#out+1] = ' string 
       ]=],
       Indent = [=[ 
-         
-            > "> " 
-         ]=],
-         Dedent = [=[ 
-            "< " < 
-         
+         'dent = dent + 1' / 
+         'out[#out+1] = "\\n" .. indent*dent' 
+      ]=],
+      Dedent = [=[ 
+         'dent = dent - 1' / 
+         'out[#out+1] = "\\n" .. indent*dent' 
       ]=],
       Newline = [=[ 
-         "/ " / 
-         
+         'out[#out+1] = "\\n" .. indent*dent' 
       ]=],
       Interline = [=[ 
-         "^" 
+         'interline = true' 
       ]=],
    },
-   Operator = [=[ 
-      op 
-   ]=],
+   Operator = {
+      NoneOrMore = [=[ 
+         'tokens:noneOrMore(' 
+      ]=],
+      OneOrMore = [=[ 
+         'tokens:oneOrMore(' 
+      ]=],
+      NoneOrOne = [=[ 
+         'tokens:noneOrOne(' 
+      ]=],
+      AllExcept = [=[ 
+         'tokens:allExcept(' 
+      ]=],
+   },
    String = {
       A = [=[ 
          '"' inner '"' 
@@ -231,7 +428,8 @@ segment {[[output]], target = [[boota.lua]], } {
       e 
    ]=],
    Method = [=[ 
-      'function (self, alias, segment)' inner 'end' 
+      'function (self, alias, segment)' inner / 
+      'end' 
    ]=],
    MethodString = [=[ 
       e 

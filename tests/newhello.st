@@ -1,14 +1,17 @@
 // (add (sub (add (sub 3 2) 1) 2) 3)
 
-parse: ignore { space newline }  [
-   -> program { expr:add }
+parse:
+   ignore { space newline }
+   entry { program }
+[
+   program { expr:add }
 
    add { left:term right:addr }
    addr [
       add { '+' right:term next:addr }
       sub { '-' right:term next:addr }
       adde { '+' right:term }
-      sube { '-' right:term }   
+      sube { '-' right:term }
    ]
 
    term { term:NUMBER }
@@ -35,7 +38,7 @@ script: direction { up } [
 
 output: [
    program { expr }
-   
+
    add { right }
    addr [
       add  { '(add ' left ' ' next  ')' }

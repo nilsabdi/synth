@@ -201,7 +201,7 @@ output:
    AString { e }
    BString { e }
 
-   Method { 'function (self, alias, segment)' inner 'end' }
+   Method { 'function (self, alias, segment)' inner/ 'end' }
    MethodString { e }
 
    Name { head tail }
@@ -247,7 +247,9 @@ script:
          self.pattern.pname = self.pname
       ---
    ]
-
+   String ---
+      self.inner = collapse(self.inner):gsub(']\\=]', ']=]')
+   ---
 ]
 
 output:
@@ -262,6 +264,9 @@ output:
       'require "errfmt"' /
       'require "common"' /
       /
+      'global = {}' /
+      'indent = "   "' /
+      /
       'source = fetch(...)' /
       'assert(source, "a source file must be specified")' /
       'tokens = tokenize(source)' /
@@ -272,15 +277,12 @@ output:
 
    Segment [
       Parse {
-         "local " name "_conf = {" config "}" /
+         "local parse_conf = {" config "}" /
          "local ruleiter = function(self)"
-         >  'if name then return findOrderedKey(name) end' /
-            'for n,rule in ipairs(self) do'
+         >  'for n,rule in ipairs(self) do'
             >  'if type(rule) == "table" then n,rule = next(rule) end' /
                'local v = rule()' /
-               'if v then return setmetatable(v, {'
-                  >'type={"' name '", type(n)=="string" and n}'<
-               '}) end'
+               'if v then return v end'
             <'end'
          <'end' /
          /
@@ -291,14 +293,83 @@ output:
          'R = {'
             >^body<
          '}' /
-         'AST = R.' entry '()'
-         'assert(AST, "unexpected token:"..errfmt(tokens:peek()))' /
-         'print(dump(AST))'
+         'AST = R.' entry '()' /
+         'if not AST and tokens:peek() then'
+         >  'error("unexpected token:"..errfmt(tokens:getLast()))'
+         <'end' /
+         /
       }
       Script {
-         ''
+         'local ' name '_conf = {' config '}' /
+         'script = function(scripts, ast)'
+         >  'local direction = 'name'_conf.direction' /
+            'for alias, child in pairs(copy(ast)) do'
+            >  'if type(child) == "table" and direction ~= "down" then'
+               >  'script(scripts, child)'
+               <'end' /
+               'if meta(child) and meta(child).type then'
+               >  'local func = scripts' /
+                  'for _, t in ipairs(meta(child).type) do'
+                  >  'if type(func) == "table" then'
+                     >  'func = func[t] or findOrderedKey(func, t)'
+                     <'end'
+                  <'end' /
+                  'if type(func) == "function" then'
+                  >  'if type(child) == "table" and #child > 0 then'
+                     >  'for _, item in ipairs(child) do'
+                        >  'func(item, alias)'
+                        <'end'
+                     <'else'
+                     >  'func(child, alias)'
+                     <'end'
+                  <'end'
+               <'end' /
+               'if type(child) == "table" and direction == "down" then'
+               >  'script(scripts, child)'
+               <'end'
+            <'end'
+         <'end'/
+         'S = {'
+            >^body<
+         '}' /
+         'script(S, AST)'/
+         /
       }
-      Output {}
+      Output {
+         'local output_conf = {'config'}' /
+         'local assert_node = function(node, alias)'
+         >  'if not node[alias] then'
+            >  'error("node doesn\'t exist: "..alias.." in "..dump(node)..":"..dump(getmetatable(node).type), 2)'
+            <'end' /
+            'return node[alias]'
+         <'end' /
+         'local function output(node, interline, dent)'
+         >  'if type(node) == "string" or node.meta and node.meta.__token__ then'
+            >  'return tostring(node)'
+            <'else'
+            >  'if #node > 0 or not getmetatable(node).type then'
+               >  'local out = {}' /
+                  'for _, node in ipairs(node) do'
+                  >  'out[#out+1] = output(node, false, dent)' /
+                     'if interline then out[#out+1] = "\\n"..indent*dent end'
+                  <'end'/
+                  'if interline then out[#out] = nil end' /
+                  'return table.concat(out)' /
+               <'else'
+               >  'local fn = O' /
+                  'for _, t in ipairs(getmetatable(node).type) do'
+                  >  'fn = assert(fn[t], "type "..t.." has no output")' /
+                     'if type(fn) == "function" then break end'
+                  <'end' /
+                  'return fn(node, false, dent)'
+               <'end'
+            <'end'
+         <'end' /
+         'O = {'
+            >^body<
+         '}'/
+         'print(output(AST, false, 0))'/
+      }
    ]
 
    Config { name ' = [[' item ']], ' }
@@ -318,24 +389,26 @@ output:
    ParsePattern  {
       'function ()'>
          'local __reset__, node = tokens.curr, {}' /
+         'repeat'
+         >   ^chunks /
+            'return setmetatable(node, {type=("'pname'"):split(".")})'
+         <'until true' /
          /
-         ^chunks /
-         'print("parsed 'pname'")' /
-         'return node'
+         'tokens.curr = __reset__'
       <'end'
    }
    ParseChunk
    [
       Aliased {
          'node.' name ' = ' element /
-         'if not node.' name ' then tokens.curr = __reset__ return end' /
+         'if not node.' name ' then break end' /
       }
-      Plain   { 'if not ' element ' then return end' / }
+      Plain   { 'if not ' element ' then break end' / }
    ]
    ParseElement
    [
       Type   { operators type opends }
-      Rule   { operators 'R.'rule'' opends }
+      Rule   { operators 'R.'rule opends }
       Tokens { operators tokens opends }
    ]
    RulePath { rule variant }
@@ -343,12 +416,12 @@ output:
 
    TokenType { 'T"' t '"' }
 
-   ScriptRule { '{' name ' = ' body '}' }
+   ScriptRule { '{' name ' = ' body '};' }
    ScriptVariant
    [
       Array { '{' >^children< '}' }
       Code  { code }
-      Named { name ' = ' children }
+      Named { name ' = ' children ';' }
    ]
 
 
@@ -359,16 +432,32 @@ output:
       Pattern { pattern ',' }
       Named { name ' = ' pattern }
    ]
-   OutputPattern { '[=[ ' >chunks< ']\=]' }
+   OutputPattern {
+      'function(self, interline, dent)'
+      >  'local out = {}' /
+         'local interline = interline or false' /
+         'local dent = dent or 0' /
+         /
+         ^chunks /
+         /
+         'return table.concat(out)'
+      <'end'
+   }
    OutputChunk   { element }
    OutputElement
    [
-      Child   { name " " }
-      String  { string " " }
-      Indent  { > "> " }
-      Dedent  { "< " < }
-      Newline { "/ " / }
-      Interline { "^" }
+      Child   { 'out[#out+1] = output(assert_node(self, "'name'"), interline, dent)' }
+      String  { 'out[#out+1] = ' string }
+      Indent  {
+         'dent = dent + 1' /
+         'out[#out+1] = "\\n" .. indent*dent'
+      }
+      Dedent  {
+         'dent = dent - 1' /
+         'out[#out+1] = "\\n" .. indent*dent'
+      }
+      Newline { 'out[#out+1] = "\\n" .. indent*dent' }
+      Interline { 'interline = true' }
    ]
 
 
@@ -388,7 +477,7 @@ output:
    AString { e }
    BString { e }
 
-   Method { 'function (self, alias, segment)' inner 'end' }
+   Method { 'function (self, alias, segment)' inner /'end' }
    MethodString { e }
 
    Name { head tail }

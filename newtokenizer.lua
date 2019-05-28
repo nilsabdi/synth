@@ -75,19 +75,21 @@ end
 
 function token:eq(partial)
    assert(partial, "partial is nil")
+   local st = self.T or self.t or self.type
+   local sl = self[1] or self.l or self.L or self.lexeme
 
    if type(partial) == "string" then -- lexeme
-      return self.lexeme == partial
+      return sl == partial
    elseif type(partial) == "table" then -- combo
       local t = partial.T or partial.t or partial.type
       local l = partial[1] or partial.l or partial.L or partial.lexeme
 
       if t and l then
-         return self.lexeme == l and self.type == t -- type and lexeme
+         return sl == l and st == t -- type and lexeme
       elseif l then
-         return self.lexeme == l -- lexeme
+         return sl == l -- lexeme
       elseif t then
-         return self.type == t -- type
+         return st == t -- type
       end
    end
 

@@ -189,8 +189,8 @@ local TokenIter = {
          for _, elem in ipairs(elems) do
             if
                type(elem) == "string" or
-                  (type(elem) == "table" and elem.meta and elem.meta.__token__) or
-                  (type(elem) == "table" and elem.meta and elem.meta.__tokentype__)
+                  (type(elem) == "table" and elem.meta and (elem.meta.__token__ or
+                   elem.meta.__tokentype__))
              then
                local tok = self:inext()
 
@@ -199,29 +199,37 @@ local TokenIter = {
                   return
                end
 
-               while tok and not tok:eq(elem) do
-                  local skipped = false
-
-                  -- try skipping tokens
-                  for _, skip in pairs(self.ignore) do
-                     if tok:eq(skip) then
-                        skipped = true
-                        tok = self:inext()
-
-                        if not tok then
-                           self.curr = save
-                           return
-                        end
-
-                        -- skipped, try matching again
-                        break
-                     end
+               if table.contains(self.ignore, function(i,e) return token.eq(e,elem) end) then
+                  if not token.eq(tok, elem) then
+                     self.curr=save
+                     return
                   end
 
-                  -- token didn't match and nothing got skipped
-                  if not skipped then
-                     self.curr = save
-                     return
+               else
+                  while tok and not tok:eq(elem) do
+                     local skipped = false
+
+                     -- try skipping tokens
+                     for _, skip in pairs(self.ignore) do
+                        if tok:eq(skip) then
+                           skipped = true
+                           tok = self:inext()
+
+                           if not tok then
+                              self.curr = save
+                              return
+                           end
+
+                           -- skipped, try matching again
+                           break
+                        end
+                     end
+
+                     -- token didn't match and nothing got skipped
+                     if not skipped then
+                        self.curr = save
+                        return
+                     end
                   end
                end
 

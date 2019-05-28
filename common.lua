@@ -1,6 +1,6 @@
 local _iter = iter
 dentsize = 3
-
+__debug__=true
 function meta(node)
    return getmetatable(node)
 end
@@ -17,8 +17,9 @@ end
 
 function dprint(...)
    if __debug__ then
-      io.write('['..debug.getinfo(2).short_src..'|'..debug.getinfo(2).currentline..'] ')
-      print(...)
+      io.stderr:write('['..debug.getinfo(2).short_src..'|'..debug.getinfo(2).currentline..'] ')
+      io.stderr:write(...)
+      io.stderr:write("\n")
    end
 end
 

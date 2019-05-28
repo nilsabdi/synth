@@ -128,6 +128,9 @@ end
 function collapse(branch)
    local res = ''
    if type(branch) == 'string' then return branch end
+   if branch.meta and branch.meta.__token__ then
+      return branch.lexeme
+   end
    for name, branch in pairs(branch) do
       if type(branch) == 'table' then
          if branch.meta and branch.meta.__token__ then

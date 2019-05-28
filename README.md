@@ -11,5 +11,5 @@ Todo:
 - [ ] Import system
 - [ ] Bootstrap 4 - implement parsing stages and remove tokenizer dependency
 - [ ] Anchor points and error system
-- [ ] Invert output system and use interpolation syntax instead
+- [x] Invert output system and use interpolation syntax instead
 - [ ] Library of reusable modules
